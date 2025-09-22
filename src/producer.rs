@@ -11,12 +11,13 @@ use crate::AppState;
 static QUEUE: LazyLock<String> =
     LazyLock::new(|| env::var("RABBITMQ_QUEUE").expect("RABBITMQ_QUEUE env var not set"));
 
-pub async fn publish_message(state: &AppState, mut payload: serde_json::Value) -> HttpResponse {
+pub async fn publish_message(
+    state: &AppState,
+    command: &str,
+    payload: serde_json::Value,
+) -> HttpResponse {
     let correlation_id = Uuid::new_v4().to_string();
-    payload
-        .as_object_mut()
-        .unwrap()
-        .insert("id".into(), correlation_id.clone().into());
+    let data = serde_json::json!({"pattern": {"cmd": command}, "data": payload, "id": correlation_id.clone()});
     let (tx, rx) = oneshot::channel();
 
     state
@@ -34,7 +35,7 @@ pub async fn publish_message(state: &AppState, mut payload: serde_json::Value) -
             "",
             QUEUE.as_str(),
             BasicPublishOptions::default(),
-            &serde_json::to_vec(&payload).unwrap(),
+            &serde_json::to_vec(&data).unwrap(),
             props,
         )
         .await
@@ -49,9 +50,7 @@ pub async fn publish_message(state: &AppState, mut payload: serde_json::Value) -
     );
 
     match tokio::time::timeout(Duration::from_secs(5), rx).await {
-        Ok(Ok(response_data)) => {
-            HttpResponse::Created().body(response_data)
-        }
+        Ok(Ok(response_data)) => HttpResponse::Created().body(response_data),
         _ => {
             state.pending_replies.lock().await.remove(&correlation_id);
             HttpResponse::GatewayTimeout().finish()

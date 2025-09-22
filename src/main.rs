@@ -82,6 +82,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(shared_data.clone())
             // Definir la ruta y el método
             .route("/countries", web::get().to(get_countries_handler))
+            .route("/countries", web::post().to(create_country_handler))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
@@ -96,25 +97,21 @@ struct CreateCountryRequest {
     dial_code: String,
 }
 
+async fn create_country_handler(
+    _state: web::Data<AppState>, // Recibimos el estado con web::Data
+    _payload: web::Json<CreateCountryRequest>,
+) -> impl Responder {
+    producer::publish_message(
+        &_state,
+        "createCountry",
+        serde_json::to_value(_payload).unwrap(),
+    )
+    .await
+}
+
 // EL HANDLER ADAPTADO PARA ACTIX WEB
 async fn get_countries_handler(
-    state: web::Data<AppState>, // Recibimos el estado con web::Data
+    _state: web::Data<AppState>, // Recibimos el estado con web::Data
 ) -> impl Responder {
-    /*
-       let correlation_id = Uuid::new_v4().to_string();
-       let (tx, rx) = oneshot::channel();
-
-       let work_queue = env::var("RABBITMQ_QUEUE").expect("RABBITMQ_QUEUE env var not set");
-       state
-           .pending_replies
-           .lock()
-           .await
-           .insert(correlation_id.clone(), tx);
-
-       let props = BasicProperties::default()
-           .with_correlation_id(correlation_id.clone().into())
-           .with_reply_to(state.reply_queue_name.as_str().into());
-    */
-    let payload = serde_json::json!({"pattern": {"cmd": "findByCriteria"}, "data":{}});
-    producer::publish_message(&state, payload).await
+    producer::publish_message(&_state, "findByCriteria", "{}".into()).await
 }
