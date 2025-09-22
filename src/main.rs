@@ -1,14 +1,13 @@
-use actix_web::{App, HttpResponse, HttpServer, Responder, web};
-use futures::StreamExt;
-use lapin::{BasicProperties, Connection, ConnectionProperties, options::*, types::FieldTable};
+use actix_web::{App, HttpServer, Responder, web};
+use lapin::{Connection, ConnectionProperties, options::*, types::FieldTable};
 use std::sync::Arc;
-use std::time::Duration;
 use std::{collections::HashMap, env};
 use tokio::sync::{Mutex, oneshot};
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use uuid::Uuid;
+mod consumer;
+mod producer;
 
 // ESTA ESTRUCTURA NO CAMBIA
 #[derive(Clone)]
@@ -16,46 +15,6 @@ struct AppState {
     amqp_channel: Arc<lapin::Channel>,
     reply_queue_name: Arc<String>,
     pending_replies: Arc<Mutex<HashMap<String, oneshot::Sender<Vec<u8>>>>>,
-}
-
-// ESTA TAREA EN SEGUNDO PLANO TAMPOCO CAMBIA
-async fn response_listener_task(
-    channel: Arc<lapin::Channel>,
-    reply_queue_name: Arc<String>,
-    pending_replies: Arc<Mutex<HashMap<String, oneshot::Sender<Vec<u8>>>>>,
-) {
-    let mut consumer = channel
-        .basic_consume(
-            &reply_queue_name,
-            "",
-            BasicConsumeOptions {
-                no_ack: true,
-                ..Default::default()
-            },
-            FieldTable::default(),
-        )
-        .await
-        .unwrap();
-
-    info!("Response listener started on queue: {}", reply_queue_name);
-
-    // Bucle para procesar las respuestas que llegan
-    while let Some(Ok(delivery)) = consumer.next().await {
-        if let Some(correlation_id) = delivery.properties.correlation_id() {
-            let correlation_id = correlation_id.to_string();
-
-            // Buscar el `Sender` para esta respuesta en el mapa
-            if let Some(sender) = pending_replies.lock().await.remove(&correlation_id) {
-                // Enviar la data de vuelta al handler que está esperando
-                if sender.send(delivery.data).is_err() {
-                    warn!(
-                        "Failed to send response for correlation_id: {}",
-                        correlation_id
-                    );
-                }
-            }
-        }
-    }
 }
 
 #[actix_web::main]
@@ -71,12 +30,13 @@ async fn main() -> std::io::Result<()> {
 
     // connect to RabbitMQ server
     let host = env::var("RABBITMQ_HOST").expect("RABBITMQ_HOST env var not set");
+    let port = env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".into());
     let user = env::var("RABBITMQ_USER").expect("RABBITMQ_USER env var not set");
     let password = env::var("RABBITMQ_PASSWORD").expect("RABBITMQ_PASSWORD env var not set");
     let vhost = env::var("RABBITMQ_VHOST").expect("RABBITMQ_VHOST env var not set");
 
     let conn = Connection::connect(
-        &format!("amqp://{}:{}@{}:5672/{}", user, password, host, vhost), // rabbitMQ connection string
+        &format!("amqp://{}:{}@{}:{}/{}", user, password, host, port, vhost), // rabbitMQ connection string
         ConnectionProperties::default(), // default connection properties
     )
     .await
@@ -99,7 +59,7 @@ async fn main() -> std::io::Result<()> {
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
     // Lanzar la tarea que escucha en la cola de respuesta
-    tokio::spawn(response_listener_task(
+    tokio::spawn(consumer::response_listener_task(
         channel.clone(),
         reply_queue_name.clone(),
         pending_replies.clone(),
@@ -128,51 +88,33 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
+// ESTRUCTURA PARA EL PAYLOAD DE CREACIÓN DE PAÍS
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CreateCountryRequest {
+    name: String,
+    code: String,
+    dial_code: String,
+}
+
 // EL HANDLER ADAPTADO PARA ACTIX WEB
 async fn get_countries_handler(
     state: web::Data<AppState>, // Recibimos el estado con web::Data
 ) -> impl Responder {
-    let correlation_id = Uuid::new_v4().to_string();
-    let (tx, rx) = oneshot::channel();
+    /*
+       let correlation_id = Uuid::new_v4().to_string();
+       let (tx, rx) = oneshot::channel();
 
-    let work_queue = env::var("RABBITMQ_QUEUE").expect("RABBITMQ_QUEUE env var not set");
-    state
-        .pending_replies
-        .lock()
-        .await
-        .insert(correlation_id.clone(), tx);
+       let work_queue = env::var("RABBITMQ_QUEUE").expect("RABBITMQ_QUEUE env var not set");
+       state
+           .pending_replies
+           .lock()
+           .await
+           .insert(correlation_id.clone(), tx);
 
-    let props = BasicProperties::default()
-        .with_correlation_id(correlation_id.clone().into())
-        .with_reply_to(state.reply_queue_name.as_str().into());
-
-    let payload =
-        serde_json::json!({"pattern": {"cmd": "findByCriteria"}, "data":{}, "id": correlation_id});
-    if state
-        .amqp_channel
-        .basic_publish(
-            "",
-            work_queue.as_str(),
-            BasicPublishOptions::default(),
-            &serde_json::to_vec(&payload).unwrap(),
-            props,
-        )
-        .await
-        .is_err()
-    {
-        return HttpResponse::InternalServerError().finish();
-    }
-
-    info!(
-        "Published RPC request with correlation_id: {}",
-        correlation_id
-    );
-
-    match tokio::time::timeout(Duration::from_secs(5), rx).await {
-        Ok(Ok(response_data)) => HttpResponse::Ok().body(response_data),
-        _ => {
-            state.pending_replies.lock().await.remove(&correlation_id);
-            HttpResponse::GatewayTimeout().finish()
-        }
-    }
+       let props = BasicProperties::default()
+           .with_correlation_id(correlation_id.clone().into())
+           .with_reply_to(state.reply_queue_name.as_str().into());
+    */
+    let payload = serde_json::json!({"pattern": {"cmd": "findByCriteria"}, "data":{}});
+    producer::publish_message(&state, payload).await
 }
