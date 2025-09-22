@@ -50,7 +50,14 @@ pub async fn publish_message(
     );
 
     match tokio::time::timeout(Duration::from_secs(5), rx).await {
-        Ok(Ok(response_data)) => HttpResponse::Created().body(response_data),
+        Ok(Ok(response_data)) => {
+            match serde_json::from_slice::<serde_json::Value>(&response_data) {
+                Ok(json_data) => {
+                    HttpResponse::Created().json(json_data.get("response").unwrap_or(&json_data))
+                }
+                Err(_) => HttpResponse::InternalServerError().finish(),
+            }
+        }
         _ => {
             state.pending_replies.lock().await.remove(&correlation_id);
             HttpResponse::GatewayTimeout().finish()

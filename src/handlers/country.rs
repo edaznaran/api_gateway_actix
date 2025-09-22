@@ -61,10 +61,16 @@ async fn delete_country_handler(
     producer::publish_message(&_state, "removeCountry", _id.into_inner().into()).await
 }
 
+#[get("/logs")]
+async fn get_country_logs_handler(_state: web::Data<AppState>) -> impl Responder {
+    producer::publish_message(&_state, "getLogs", "{}".into()).await
+}
+
 pub fn countries_scope() -> Scope {
     web::scope("/countries")
         .service(get_countries_handler)
         .service(create_country_handler)
         .service(update_country_handler)
         .service(delete_country_handler)
+        .service(get_country_logs_handler)
 }
