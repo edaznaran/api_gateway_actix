@@ -1,4 +1,4 @@
-use actix_web::{App, HttpServer, Responder, web};
+use actix_web::{App, HttpServer, web};
 use lapin::{Connection, ConnectionProperties, options::*, types::FieldTable};
 use std::sync::Arc;
 use std::{collections::HashMap, env};
@@ -8,6 +8,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 mod consumer;
 mod producer;
+mod handlers;
+use handlers::country;
 
 // ESTA ESTRUCTURA NO CAMBIA
 #[derive(Clone)]
@@ -80,38 +82,10 @@ async fn main() -> std::io::Result<()> {
         App::new()
             // Registrar el estado para que esté disponible en los handlers
             .app_data(shared_data.clone())
-            // Definir la ruta y el método
-            .route("/countries", web::get().to(get_countries_handler))
-            .route("/countries", web::post().to(create_country_handler))
+            // Definir los handlers
+            .service(country::countries_scope())
     })
     .bind(("127.0.0.1", 8080))?
     .run()
     .await
-}
-
-// ESTRUCTURA PARA EL PAYLOAD DE CREACIÓN DE PAÍS
-#[derive(serde::Deserialize, serde::Serialize)]
-struct CreateCountryRequest {
-    name: String,
-    code: String,
-    dial_code: String,
-}
-
-async fn create_country_handler(
-    _state: web::Data<AppState>, // Recibimos el estado con web::Data
-    _payload: web::Json<CreateCountryRequest>,
-) -> impl Responder {
-    producer::publish_message(
-        &_state,
-        "createCountry",
-        serde_json::to_value(_payload).unwrap(),
-    )
-    .await
-}
-
-// EL HANDLER ADAPTADO PARA ACTIX WEB
-async fn get_countries_handler(
-    _state: web::Data<AppState>, // Recibimos el estado con web::Data
-) -> impl Responder {
-    producer::publish_message(&_state, "findByCriteria", "{}".into()).await
 }
