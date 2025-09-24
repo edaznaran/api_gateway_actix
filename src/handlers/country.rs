@@ -1,6 +1,5 @@
-use actix_web::{Responder, Scope, delete, get, post, put, web};
-
 use crate::{AppState, producer};
+use actix_web::{Responder, Scope, delete, get, post, put, web};
 
 // ESTRUCTURA PARA EL PAYLOAD DE CREACIÓN DE PAÍS (campos obligatorios)
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -13,6 +12,13 @@ struct CreateCountryRequest {
 // ESTRUCTURA PARA EL PAYLOAD DE ACTUALIZACIÓN DE PAÍS (campos opcionales)
 #[derive(serde::Deserialize, serde::Serialize)]
 struct UpdateCountryRequest {
+    name: Option<String>,
+    code: Option<String>,
+    dial_code: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct CountryQuery {
     name: Option<String>,
     code: Option<String>,
     dial_code: Option<String>,
@@ -35,8 +41,14 @@ async fn create_country_handler(
 #[get("")]
 async fn get_countries_handler(
     _state: web::Data<AppState>, // Recibimos el estado con web::Data
+    _query: web::Query<CountryQuery>,
 ) -> impl Responder {
-    producer::publish_message(&_state, "findByCriteria", "{}".into()).await
+    producer::publish_message(
+        &_state,
+        "findByCriteria",
+        serde_json::to_value(&_query.0).unwrap(),
+    )
+    .await
 }
 
 #[put("/{id}")]

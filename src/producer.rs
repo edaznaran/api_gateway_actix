@@ -53,7 +53,7 @@ pub async fn publish_message(
         Ok(Ok(response_data)) => {
             match serde_json::from_slice::<serde_json::Value>(&response_data) {
                 Ok(json_data) => {
-                    HttpResponse::Created().json(json_data.get("response").unwrap_or(&json_data))
+                    HttpResponse::Ok().json(json_data.get("response").unwrap_or(&json_data))
                 }
                 Err(_) => HttpResponse::InternalServerError().finish(),
             }
